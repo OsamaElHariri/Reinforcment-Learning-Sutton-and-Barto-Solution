@@ -150,14 +150,16 @@ class Track:
 
 # This acts as the agent.
 class Car:
+    max_speed = 3
+
     # Constructor
     def __init__(self, track):
-        self.max_speed = 5
         self.trajectory = []
         # The speeds and position are randomized through the call to random_start_position()
         self.vertical_speed = 0
         self.horizontal_speed = 0
         self.position = [0, 0]
+        self.epsilon = 0.5
 
         self.track = track if isinstance(track, Track) else Track.make_default_track(1)
         self.random_start_position()
@@ -172,7 +174,7 @@ class Car:
         first_non_greedy_action = None
         while not self.check_finish(self.position):
             state = State.get_state((self.position[0], self.position[1], self.horizontal_speed, self.vertical_speed))
-            action, greedy = self.epsilon_greedy_action(0.1, state)
+            action, greedy = self.epsilon_greedy_action(state)
 
             # Keeping track of the first time we did not take the optimal action
             if not greedy and first_non_greedy_action is None:
@@ -182,6 +184,35 @@ class Car:
             self.trajectory += [(state, action, reward)]
             self.apply_action(action)
             self.move()
+        return first_non_greedy_action
+
+    # Applies the Off-Policy Monte Carlo learning method to the model
+    def off_policy_monte_carlo(self, iterations):
+        for _ in range(-1, iterations):
+            self.reset()
+            nongreedy_action_index = self.generate_episode()
+
+            # If nongreedy_action_index is None, the all the actions taken were greedy and optimal. Skip this trajectory
+            if nongreedy_action_index is None:
+                continue
+
+            # Remove the trajectory entries where an optimal action is taken
+            # See page 123 in the book http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
+            self.trajectory = self.trajectory[nongreedy_action_index:]
+            W, G = 1., 0
+
+            for step in self.trajectory:
+                action_info = step[0].get_action_value(step[1])
+                weight_denominator = self.epsilon / len(step[0].action_dictionary)
+                W = W * (1 / weight_denominator) if step[1] == step[0].get_best_action() else (1 / (1 - self.epsilon + weight_denominator))
+                """ TODO THE REWARD DOESNT WORK LIKE THIS!!! The current state's returns is this reward
+                plus the discounted reward of the next state. The next states reward is its rewards plus the
+                discounted reward of its next state. WE ARE CURRENTLY DOING THIS BACKWARDS!!!"""
+
+                G = 0.90 * G + step[2]
+                N = action_info[1] + (W * G)
+                D = action_info[2] + W
+                step[0].set_action_value(step[1], (N / D, N, D))
 
     # Applies an action to the speeds of the car
     def apply_action(self, a):
@@ -191,8 +222,8 @@ class Car:
     # Returns a random starting position from the starting positions of the track
     def random_start_position(self):
         self.trajectory = []
-        self.vertical_speed = random.randrange(0, self.max_speed + 1)
-        self.horizontal_speed = random.randrange(0, self.max_speed + 1)
+        self.vertical_speed = random.randrange(0, Car.max_speed + 1)
+        self.horizontal_speed = random.randrange(0, Car.max_speed + 1)
         if self.vertical_speed == 0 and self.horizontal_speed == 0:
             if random.random() > 0.5:
                 self.vertical_speed += 1
@@ -244,8 +275,8 @@ class Car:
     # Chooses an action using the epsilon-greedy soft policy
     # Returns a tuple. First, the appropriate action. Second, returns True if the action chosen
     # is the best action, False otherwise
-    def epsilon_greedy_action(self, epsilon, state):
-        if random.random() > epsilon:
+    def epsilon_greedy_action(self, state):
+        if random.random() >= self.epsilon:
             return state.get_best_action(), True
         else:
             a = state.get_random_action()
@@ -254,12 +285,25 @@ class Car:
     # Checks the reward of the next step, taking an action, a, into account. Reward of -1 if the car stays on
     # the track, -5 otherwise
     def check_reward(self, state, a):
-        coords = (state.xpos + state.ypos + a[0], self.position[1] + self.vertical_speed + a[1])
+        coords = (state.xpos + state.xspeed + a[0], state.ypos + state.yspeed + a[1])
         return -1 if self.track.valid_cell(coords) else -5
 
     # Checks if a cell is on a Finish cell. The pos is of the form [x, y]
     def check_finish(self, pos):
         return [pos[0], pos[1]] in self.track.finish
+
+    # Return the optimal trajectories for all start positions and a random vertical and horizontal speeds
+    def optimal_trajectory(self):
+        temp_epsilon = self.epsilon
+        self.epsilon = 0
+        trajectories = ""
+        for coords in self.track.start:
+            self.reset()
+            self.position = coords
+            self.generate_episode()
+            trajectories += "\n{}\n".format(self.trajectory)
+        self.epsilon = temp_epsilon
+        return trajectories
 
     # Conveniently named function
     def reset(self):
@@ -268,7 +312,7 @@ class Car:
 
 # This class stores all the states and all the possible actions from that state with their associated action values
 class State:
-    actions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1), (1, -1), (1, 0), (1, 1)]
+    actions = [(1, 1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1), (1, -1), (1, 0), (-1, -1)]
 
     # The states are stored with keys being of the form (xpos, ypos, xspeed, yspeed)
     states_dictionary = {}
@@ -283,21 +327,22 @@ class State:
         for pair in State.actions:
             # First, check if the conditions on the vertical and horizontal speeds are satisfied,
             # then add the action to the dictionary
-            if 0 <= self.xspeed + pair[0] <= 5 and 0 <= self.yspeed + pair[1] <= 5 \
+            if 0 <= self.xspeed + pair[0] <= Car.max_speed and 0 <= self.yspeed + pair[1] <= Car.max_speed \
                     and (self.xspeed + pair[0] != 0 or self.yspeed + pair[1] != 0):
                 # Every action in this state has 3 values associated with it, (Q(s, a), N(s, a), D(s, a)),
                 # where Q is the action value, N is the numerator, and D the denominator
                 # See page 123 in the book http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
-                self.action_dictionary[pair] = (0., 0., 0.)
+                self.action_dictionary[pair] = (-6., 0., 0.)
 
     # Returns a string representation of the state
     def __str__(self):
-        return "xpos = {}, ypos = {}, xspeed = {}, yspeed = {}\nAction Dictionary:\n{}" \
+        return "xpos = {}, ypos = {}, xspeed = {}, yspeed = {}\nAction Dictionary:\n{}\n" \
             .format(self.xpos, self.ypos, self.xspeed, self.yspeed, self.action_dictionary.items())
 
-    # Returns the state as a tuple
+    # Returns a string og the state as a tuple
     def __repr__(self):
-        return "({}, {}, {}, {})".format(self.xpos, self.ypos, self.xspeed, self.yspeed)
+        #return "({}, {}, {}, {})".format(self.xpos, self.ypos, self.xspeed, self.yspeed)
+        return self.__str__()
 
     # Returns the action with the highest Q(s, a)
     def get_best_action(self):
