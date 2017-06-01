@@ -115,7 +115,12 @@ class Track:
 
     # Returns false if the cell is off the track, true otherwise, coords is a tuple of the form (i, j)
     def valid_cell(self, coords):
-        return self.get(coords[0], coords[1]) is not None
+        try:
+            return self.get(coords[0], coords[1]) is not None
+        except IndexError:
+            # If we reached here, it means we are out of the track grid,
+            # meaning we will get an IndexError because we are out of bounds, so it is not a valid cell
+            return False
 
     # Sets the start cells as the valid cells in the bottom most row
     def find_default_start(self):
@@ -148,19 +153,44 @@ class Car:
     # Constructor
     def __init__(self, track):
         self.max_speed = 5
+        self.trajectory = []
         # The speeds and position are randomized through the call to random_start_position()
         self.vertical_speed = 0
         self.horizontal_speed = 0
         self.position = [0, 0]
+
         self.track = track if isinstance(track, Track) else Track.make_default_track(1)
         self.random_start_position()
 
     # Returns a string representation of the car
     def __str__(self):
-        return "Position = {}, Horizontal speed = {}, Vertical speed = {}".format(self.position, self.horizontal_speed, self.vertical_speed)
+        return "Position = {}, Horizontal speed = {}, Vertical speed = {}".format(self.position, self.horizontal_speed,
+                                                                                  self.vertical_speed)
+
+    # Generates an episode by moving the car from the start to the finish, choosing different actions on each step
+    def generate_episode(self):
+        first_non_greedy_action = None
+        while not self.check_finish(self.position):
+            state = State.get_state((self.position[0], self.position[1], self.horizontal_speed, self.vertical_speed))
+            action, greedy = self.epsilon_greedy_action(0.1, state)
+
+            # Keeping track of the first time we did not take the optimal action
+            if not greedy and first_non_greedy_action is None:
+                first_non_greedy_action = len(self.trajectory)
+
+            reward = self.check_reward(state, action)
+            self.trajectory += [(state, action, reward)]
+            self.apply_action(action)
+            self.move()
+
+    # Applies an action to the speeds of the car
+    def apply_action(self, a):
+        self.horizontal_speed += a[0]
+        self.vertical_speed += a[1]
 
     # Returns a random starting position from the starting positions of the track
     def random_start_position(self):
+        self.trajectory = []
         self.vertical_speed = random.randrange(0, self.max_speed + 1)
         self.horizontal_speed = random.randrange(0, self.max_speed + 1)
         if self.vertical_speed == 0 and self.horizontal_speed == 0:
@@ -172,58 +202,68 @@ class Car:
         start = self.track.start
         self.position = start[random.randrange(0, len(start), 1)]
 
-    # Conveniently named function
-    def reset(self):
-        self.random_start_position()
-
     # Moves the car by updating its position. If the car drives off the edge, or does not move at all,
-    # the position is clipped(if it is driving off the edge) or moved once up or to the right if it remained stationary
+    # the position is clipped(preventing the car from going off the edge) using the method move_slowly()
+    # or moved once up or to the right if it remained stationary
     def move(self):
-
-        # Moves the agent in an alternating fashion of up and right one step at a time(This is the clipping of the move)
-        def move_slowly(remaining_x_moves=self.horizontal_speed, remaining_y_moves=self.vertical_speed, moved=True, going_up=True):
-            remaining = remaining_y_moves if going_up else remaining_x_moves
-            valid = False
-            if remaining > 0:
-                coords = [self.position[0] + (0 if going_up else 1), self.position[1] + (1 if going_up else 0)]
-                valid = self.track.valid_cell(coords)
-            if valid:
-                self.position = coords
-                remaining_x_moves -= 0 if going_up else 1
-                remaining_y_moves -= 1 if going_up else 0
-            if valid or moved:
-                move_slowly(remaining_x_moves, remaining_y_moves, valid, not going_up)
-
         new_pos = [self.position[0] + self.horizontal_speed, self.position[1] + self.vertical_speed]
+
         if self.track.valid_cell(new_pos):
             self.position = new_pos
         else:
             temp = [self.position[0], self.position[1]]
-            move_slowly()
+            self.move_slowly()
             # Checking if the agent moved. We do this because the agent must move after each step
             if temp == self.position:
                 coords = [self.position[0] + 1, self.position[1]]
                 coords2 = [self.position[0], self.position[1] + 1]
                 # If the agent did not move, then either up or right are invalid. We take a step in the valid direction
-                self.position = coords if self.track.valid_cell(coords) else (coords2 if self.track.valid_cell(coords2) else self.position)
+                if self.track.valid_cell(coords):
+                    self.position = coords
+                elif self.track.valid_cell(coords2):
+                    self.position = coords2
+
+    # Moves the agent in an alternating fashion of up and right one step at a time(This is the clipping of the move)
+    def move_slowly(self, remaining_x_moves=None, remaining_y_moves=None, moved=True, going_up=True):
+        remaining_x_moves = self.horizontal_speed if remaining_x_moves is None else remaining_x_moves
+        remaining_y_moves = self.vertical_speed if remaining_y_moves is None else remaining_y_moves
+
+        remaining = remaining_y_moves if going_up else remaining_x_moves
+        valid = False
+        if remaining > 0:
+            coords = [self.position[0] + (0 if going_up else 1),
+                      self.position[1] + (1 if going_up else 0)]
+            valid = self.track.valid_cell(coords)
+        if valid:
+            self.position = coords
+            remaining_x_moves -= 0 if going_up else 1
+            remaining_y_moves -= 1 if going_up else 0
+        if valid or moved:
+            self.move_slowly(remaining_x_moves, remaining_y_moves, valid, not going_up)
 
     # Chooses an action using the epsilon-greedy soft policy
+    # Returns a tuple. First, the appropriate action. Second, returns True if the action chosen
+    # is the best action, False otherwise
     def epsilon_greedy_action(self, epsilon, state):
         if random.random() > epsilon:
-            return state.get_best_action()
+            return state.get_best_action(), True
         else:
-            while True:
-                a = state.get_random_action()
+            a = state.get_random_action()
+            return a, (a == state.get_best_action())
 
-
-    # Checks the reward of the next step, taking an action, a, into account
-    def check_reward(self, a):
-        coords = (self.position[0] + self.horizontal_speed + a[0], self.position[1] + self.vertical_speed + a[1])
+    # Checks the reward of the next step, taking an action, a, into account. Reward of -1 if the car stays on
+    # the track, -5 otherwise
+    def check_reward(self, state, a):
+        coords = (state.xpos + state.ypos + a[0], self.position[1] + self.vertical_speed + a[1])
         return -1 if self.track.valid_cell(coords) else -5
 
     # Checks if a cell is on a Finish cell. The pos is of the form [x, y]
     def check_finish(self, pos):
         return [pos[0], pos[1]] in self.track.finish
+
+    # Conveniently named function
+    def reset(self):
+        self.random_start_position()
 
 
 # This class stores all the states and all the possible actions from that state with their associated action values
@@ -244,11 +284,20 @@ class State:
             # First, check if the conditions on the vertical and horizontal speeds are satisfied,
             # then add the action to the dictionary
             if 0 <= self.xspeed + pair[0] <= 5 and 0 <= self.yspeed + pair[1] <= 5 \
-                    and (self.xspeed != 0 + pair[0] and self.yspeed + pair[1] != 0):
+                    and (self.xspeed + pair[0] != 0 or self.yspeed + pair[1] != 0):
                 # Every action in this state has 3 values associated with it, (Q(s, a), N(s, a), D(s, a)),
                 # where Q is the action value, N is the numerator, and D the denominator
                 # See page 123 in the book http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
                 self.action_dictionary[pair] = (0., 0., 0.)
+
+    # Returns a string representation of the state
+    def __str__(self):
+        return "xpos = {}, ypos = {}, xspeed = {}, yspeed = {}\nAction Dictionary:\n{}" \
+            .format(self.xpos, self.ypos, self.xspeed, self.yspeed, self.action_dictionary.items())
+
+    # Returns the state as a tuple
+    def __repr__(self):
+        return "({}, {}, {}, {})".format(self.xpos, self.ypos, self.xspeed, self.yspeed)
 
     # Returns the action with the highest Q(s, a)
     def get_best_action(self):
@@ -259,13 +308,14 @@ class State:
         return random.choice(list(self.action_dictionary.keys()))
 
     # Gets a state from the states_dictionary, makes a new State object if the desired state is not present
+    # The state tuple is of the form (xpos, ypos, xspeed, yspeed)
     @staticmethod
     def get_state(state_tuple):
         # Make sure that a State is always returned
-        if State.states_dictionary[state_tuple] is None:
+        if State.states_dictionary.get(state_tuple) is None:
             State.states_dictionary[state_tuple] = State(state_tuple[0], state_tuple[1], state_tuple[2], state_tuple[3])
 
-        return State.states_dictionary[state_tuple]
+        return State.states_dictionary.get(state_tuple)
 
     # Returns the action value of a certain action in this state
     def get_action_value(self, a):
@@ -274,3 +324,7 @@ class State:
     # Sets the action value of certain action in this state
     def set_action_value(self, a, val):
         self.action_dictionary[a] = val
+
+    # Returns the state in tuple form
+    def tuple_form(self):
+        return self.xpos, self.ypos, self.xspeed, self.yspeed
