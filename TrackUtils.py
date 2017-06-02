@@ -192,23 +192,26 @@ class Car:
             self.reset()
             nongreedy_action_index = self.generate_episode()
 
-            # If nongreedy_action_index is None, the all the actions taken were greedy and optimal. Skip this trajectory
+            # If nongreedy_action_index is None, all the actions taken were greedy and optimal. Skip this trajectory
             if nongreedy_action_index is None:
                 continue
 
             # Remove the trajectory entries where an optimal action is taken
             # See page 123 in the book http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
             self.trajectory = self.trajectory[nongreedy_action_index:]
+
+            # The current state's returns is this state's reward
+            # plus the discounted reward of the next state. The next states reward is its rewards plus the
+            # discounted reward of its next state. This is why we reverse the trajectory. The algorithm in the
+            # book also states that the weight of this state is the product of all the weights from this state until
+            # the final state in the trajectory. This is also taken into account by reversing the trajectory
+            self.trajectory = self.trajectory[::-1]
             W, G = 1., 0
 
             for step in self.trajectory:
                 action_info = step[0].get_action_value(step[1])
                 weight_denominator = self.epsilon / len(step[0].action_dictionary)
                 W = W * (1 / weight_denominator) if step[1] == step[0].get_best_action() else (1 / (1 - self.epsilon + weight_denominator))
-                """ TODO THE REWARD DOESNT WORK LIKE THIS!!! The current state's returns is this reward
-                plus the discounted reward of the next state. The next states reward is its rewards plus the
-                discounted reward of its next state. WE ARE CURRENTLY DOING THIS BACKWARDS!!!"""
-
                 G = 0.90 * G + step[2]
                 N = action_info[1] + (W * G)
                 D = action_info[2] + W
@@ -332,6 +335,9 @@ class State:
                 # Every action in this state has 3 values associated with it, (Q(s, a), N(s, a), D(s, a)),
                 # where Q is the action value, N is the numerator, and D the denominator
                 # See page 123 in the book http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
+                # The Q(s, a) values start at -6 and not 0 because I wanted to give it a pessimistic value. This
+                # is to prevent an action value from not being updated because it is the optimal move with
+                # value 0, when that is actually the default random value. So we use -6 instead
                 self.action_dictionary[pair] = (-6., 0., 0.)
 
     # Returns a string representation of the state
