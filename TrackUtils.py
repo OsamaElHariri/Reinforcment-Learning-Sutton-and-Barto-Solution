@@ -335,10 +335,11 @@ class State:
                 # Every action in this state has 3 values associated with it, (Q(s, a), N(s, a), D(s, a)),
                 # where Q is the action value, N is the numerator, and D the denominator
                 # See page 123 in the book http://people.inf.elte.hu/lorincz/Files/RL_2006/SuttonBook.pdf
-                # The Q(s, a) values start at -6 and not 0 because I wanted to give it a pessimistic value. This
-                # is to prevent an action value from not being updated because it is the optimal move with
-                # value 0, when that is actually the default random value. So we use -6 instead
-                self.action_dictionary[pair] = (-6., 0., 0.)
+                # The Q(s, a) values start at a negative number and not 0 because I wanted to give it
+                # a pessimistic value. This is to prevent an action value from not being updated because
+                # it is the optimal move with value 0, when that is actually the default
+                # random value. So we use a negative number instead
+                self.action_dictionary[pair] = (float("-inf"), 0., 0.)
 
     # Returns a string representation of the state
     def __str__(self):
