@@ -338,7 +338,7 @@ class State:
                 # The Q(s, a) values start at a negative number and not 0 because I wanted to give it
                 # a pessimistic value. This is to prevent an action value from not being updated because
                 # it is the optimal move with value 0, when that is actually the default
-                # random value. So we use a negative number instead
+                # random value. So I use a negative number instead
                 self.action_dictionary[pair] = (float("-inf"), 0., 0.)
 
     # Returns a string representation of the state
@@ -348,8 +348,8 @@ class State:
 
     # Returns a string og the state as a tuple
     def __repr__(self):
-        #return "({}, {}, {}, {})".format(self.xpos, self.ypos, self.xspeed, self.yspeed)
-        return self.__str__()
+        return "({}, {}, {}, {})".format(self.xpos, self.ypos, self.xspeed, self.yspeed)
+        #return self.__str__()
 
     # Returns the action with the highest Q(s, a)
     def get_best_action(self):
